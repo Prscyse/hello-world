@@ -36,25 +36,29 @@ jobs:
       - name: Restore Android project
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -Eeuxo pipefail
           mkdir -p android-project
           base64 --decode android-apk-build/project.tar.gz.b64 | tar -xzf - -C android-project
-          test -f android-project/settings.gradle.kts
-          test -f android-project/gradlew
-          chmod +x android-project/gradlew
+          find android-project -maxdepth 4 -type f | sort | sed -n '1,200p'
+          SETTINGS="$(find android-project -maxdepth 5 -type f -name 'settings.gradle.kts' -print -quit)"
+          test -n "$SETTINGS"
+          PROJECT_DIR="$(dirname "$SETTINGS")"
+          test -f "$PROJECT_DIR/gradlew"
+          chmod +x "$PROJECT_DIR/gradlew"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Build debug APK
-        working-directory: android-project
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -Eeuxo pipefail
+          cd "$PROJECT_DIR"
           ./gradlew --no-daemon --stacktrace assembleDebug
 
       - name: Prepare APK artifact
         shell: bash
         run: |
-          set -Eeuo pipefail
-          APK="$(find android-project/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
+          set -Eeuxo pipefail
+          APK="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -type f -name '*.apk' -print -quit)"
           test -n "$APK"
           mkdir -p output
           cp "$APK" 'output/Jardin-Central-Alpha-0.1.0-debug.apk'
