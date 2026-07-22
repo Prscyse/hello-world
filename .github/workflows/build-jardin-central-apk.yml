@@ -1,12 +1,6 @@
 name: Build Jardín Central APK
 
 on:
-  push:
-    branches:
-      - build-jardin-central-apk-0.1.0
-    paths:
-      - '.github/workflows/build-jardin-central-apk.yml'
-      - 'android-apk-build/**'
   pull_request:
     branches:
       - master
@@ -21,7 +15,7 @@ permissions:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Checkout project
@@ -33,32 +27,456 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Restore Android project
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Create Android project
         shell: bash
         run: |
-          set -Eeuxo pipefail
-          mkdir -p android-project
-          base64 --decode android-apk-build/project.tar.gz.b64 | tar -xzf - -C android-project
-          find android-project -maxdepth 4 -type f | sort | sed -n '1,200p'
-          SETTINGS="$(find android-project -maxdepth 5 -type f -name 'settings.gradle.kts' -print -quit)"
-          test -n "$SETTINGS"
-          PROJECT_DIR="$(dirname "$SETTINGS")"
-          test -f "$PROJECT_DIR/gradlew"
-          chmod +x "$PROJECT_DIR/gradlew"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          set -Eeuo pipefail
+          mkdir -p android-project/app/src/main/java/org/jardincentral/app
+          mkdir -p android-project/app/src/main/res/{drawable,layout,values,xml}
+
+          cat > android-project/settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = 'JardinCentral'
+          include ':app'
+          EOF
+
+          cat > android-project/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > android-project/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat > android-project/app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'org.jardincentral.app'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'org.jardincentral.app'
+                  minSdk 26
+                  targetSdk 35
+                  versionCode 1
+                  versionName '0.1.0'
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                  }
+              }
+          }
+
+          dependencies {
+              implementation 'androidx.core:core:1.15.0'
+          }
+          EOF
+
+          : > android-project/app/proguard-rules.pro
+
+          cat > android-project/app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+              <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+              <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="Jardín Central"
+                  android:networkSecurityConfig="@xml/network_security_config"
+                  android:theme="@style/Theme.JardinCentral"
+                  android:usesCleartextTraffic="false">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+                      android:exported="true"
+                      android:screenOrientation="unspecified">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                      <intent-filter android:autoVerify="true">
+                          <action android:name="android.intent.action.VIEW" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <category android:name="android.intent.category.BROWSABLE" />
+                          <data android:scheme="https" android:host="jardincentral.org" />
+                      </intent-filter>
+                  </activity>
+
+                  <provider
+                      android:name="androidx.core.content.FileProvider"
+                      android:authorities="${applicationId}.fileprovider"
+                      android:exported="false"
+                      android:grantUriPermissions="true">
+                      <meta-data
+                          android:name="android.support.FILE_PROVIDER_PATHS"
+                          android:resource="@xml/file_paths" />
+                  </provider>
+              </application>
+          </manifest>
+          EOF
+
+          cat > android-project/app/src/main/res/layout/activity_main.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent">
+              <WebView
+                  android:id="@+id/webView"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent" />
+              <ProgressBar
+                  android:id="@+id/progress"
+                  style="?android:attr/progressBarStyleHorizontal"
+                  android:layout_width="match_parent"
+                  android:layout_height="3dp"
+                  android:layout_gravity="top"
+                  android:max="100" />
+          </FrameLayout>
+          EOF
+
+          cat > android-project/app/src/main/res/values/colors.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="jardin_green">#075E54</color>
+              <color name="jardin_green_dark">#044A42</color>
+              <color name="jardin_mint">#DDF5EE</color>
+              <color name="white">#FFFFFF</color>
+          </resources>
+          EOF
+
+          cat > android-project/app/src/main/res/values/styles.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="Theme.JardinCentral" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowLightStatusBar">false</item>
+                  <item name="android:statusBarColor">@color/jardin_green_dark</item>
+                  <item name="android:navigationBarColor">@color/jardin_green</item>
+                  <item name="android:windowActionModeOverlay">true</item>
+                  <item name="android:windowNoTitle">true</item>
+              </style>
+          </resources>
+          EOF
+
+          cat > android-project/app/src/main/res/drawable/ic_launcher.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#075E54" android:pathData="M0,0h108v108h-108z" />
+              <path android:fillColor="#DDF5EE" android:pathData="M20,72L54,28L88,72L80,72L80,88L62,88L62,65L46,65L46,88L28,88L28,72Z" />
+              <path android:fillColor="#FFFFFF" android:pathData="M42,45c5,-12 19,-13 24,-1c-10,-4 -18,2 -19,11c-4,-2 -7,-6 -5,-10z" />
+              <path android:fillColor="#5ED3B9" android:pathData="M66,39c11,0 17,10 13,19c-4,-8 -13,-10 -21,-5c0,-7 3,-12 8,-14z" />
+          </vector>
+          EOF
+
+          cat > android-project/app/src/main/res/xml/network_security_config.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <base-config cleartextTrafficPermitted="false" />
+              <domain-config cleartextTrafficPermitted="false">
+                  <domain includeSubdomains="true">jardincentral.org</domain>
+              </domain-config>
+          </network-security-config>
+          EOF
+
+          cat > android-project/app/src/main/res/xml/file_paths.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <paths xmlns:android="http://schemas.android.com/apk/res/android">
+              <cache-path name="camera_cache" path="." />
+              <external-cache-path name="external_camera_cache" path="." />
+          </paths>
+          EOF
+
+          cat > android-project/app/src/main/java/org/jardincentral/app/MainActivity.java <<'EOF'
+          package org.jardincentral.app;
+
+          import android.Manifest;
+          import android.app.Activity;
+          import android.app.DownloadManager;
+          import android.content.ActivityNotFoundException;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.os.Environment;
+          import android.provider.MediaStore;
+          import android.view.View;
+          import android.webkit.CookieManager;
+          import android.webkit.PermissionRequest;
+          import android.webkit.URLUtil;
+          import android.webkit.ValueCallback;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.widget.ProgressBar;
+          import android.widget.Toast;
+
+          import androidx.core.app.ActivityCompat;
+          import androidx.core.content.ContextCompat;
+          import androidx.core.content.FileProvider;
+
+          import java.io.File;
+          import java.io.IOException;
+          import java.text.SimpleDateFormat;
+          import java.util.ArrayList;
+          import java.util.Date;
+          import java.util.List;
+          import java.util.Locale;
+
+          public class MainActivity extends Activity {
+              private static final String HOME = "https://jardincentral.org/";
+              private static final int FILE_CHOOSER_REQUEST = 4101;
+              private static final int WEB_PERMISSION_REQUEST = 4102;
+
+              private WebView webView;
+              private ProgressBar progress;
+              private ValueCallback<Uri[]> fileCallback;
+              private Uri cameraUri;
+              private PermissionRequest pendingWebPermission;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  setContentView(R.layout.activity_main);
+                  webView = findViewById(R.id.webView);
+                  progress = findViewById(R.id.progress);
+                  configureWebView();
+
+                  if (savedInstanceState == null) {
+                      Uri data = getIntent() != null ? getIntent().getData() : null;
+                      webView.loadUrl(data != null ? data.toString() : HOME);
+                  } else {
+                      webView.restoreState(savedInstanceState);
+                  }
+              }
+
+              private void configureWebView() {
+                  WebSettings settings = webView.getSettings();
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setDatabaseEnabled(true);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+                  settings.setAllowFileAccess(true);
+                  settings.setAllowContentAccess(true);
+                  settings.setSupportZoom(false);
+                  settings.setBuiltInZoomControls(false);
+                  settings.setUserAgentString(settings.getUserAgentString() + " JardinCentralAndroid/0.1.0");
+
+                  CookieManager.getInstance().setAcceptCookie(true);
+                  CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+
+                  webView.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                          return handleUrl(request.getUrl());
+                      }
+
+                      @Override
+                      public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                          return handleUrl(Uri.parse(url));
+                      }
+                  });
+
+                  webView.setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public void onProgressChanged(WebView view, int newProgress) {
+                          progress.setProgress(newProgress);
+                          progress.setVisibility(newProgress >= 100 ? View.GONE : View.VISIBLE);
+                      }
+
+                      @Override
+                      public void onPermissionRequest(PermissionRequest request) {
+                          runOnUiThread(() -> grantWebPermission(request));
+                      }
+
+                      @Override
+                      public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                          if (fileCallback != null) fileCallback.onReceiveValue(null);
+                          fileCallback = callback;
+                          return openFileChooser(params);
+                      }
+                  });
+
+                  webView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+                      try {
+                          DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                          request.addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url));
+                          request.addRequestHeader("User-Agent", userAgent);
+                          request.setMimeType(mimeType);
+                          request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                          request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
+                                  URLUtil.guessFileName(url, contentDisposition, mimeType));
+                          DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                          manager.enqueue(request);
+                          Toast.makeText(this, "Descarga iniciada", Toast.LENGTH_SHORT).show();
+                      } catch (Exception error) {
+                          Toast.makeText(this, "No se pudo iniciar la descarga", Toast.LENGTH_LONG).show();
+                      }
+                  });
+              }
+
+              private boolean handleUrl(Uri uri) {
+                  String scheme = uri.getScheme();
+                  String host = uri.getHost();
+                  if (("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
+                          && host != null && (host.equals("jardincentral.org") || host.endsWith(".jardincentral.org"))) {
+                      return false;
+                  }
+                  try {
+                      startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                  } catch (ActivityNotFoundException error) {
+                      Toast.makeText(this, "No hay una aplicación para abrir este enlace", Toast.LENGTH_LONG).show();
+                  }
+                  return true;
+              }
+
+              private void grantWebPermission(PermissionRequest request) {
+                  List<String> needed = new ArrayList<>();
+                  for (String resource : request.getResources()) {
+                      if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)
+                              && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                          needed.add(Manifest.permission.RECORD_AUDIO);
+                      }
+                      if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)
+                              && ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                          needed.add(Manifest.permission.CAMERA);
+                      }
+                  }
+                  if (needed.isEmpty()) {
+                      request.grant(request.getResources());
+                  } else {
+                      pendingWebPermission = request;
+                      ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), WEB_PERMISSION_REQUEST);
+                  }
+              }
+
+              private boolean openFileChooser(WebChromeClient.FileChooserParams params) {
+                  Intent content = params.createIntent();
+                  content.addCategory(Intent.CATEGORY_OPENABLE);
+                  Intent camera = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                  try {
+                      File image = File.createTempFile("JC_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date()), ".jpg", getExternalCacheDir());
+                      cameraUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", image);
+                      camera.putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
+                      camera.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                  } catch (IOException error) {
+                      camera = null;
+                      cameraUri = null;
+                  }
+
+                  Intent chooser = new Intent(Intent.ACTION_CHOOSER);
+                  chooser.putExtra(Intent.EXTRA_INTENT, content);
+                  if (camera != null) chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{camera});
+                  try {
+                      startActivityForResult(chooser, FILE_CHOOSER_REQUEST);
+                      return true;
+                  } catch (ActivityNotFoundException error) {
+                      fileCallback.onReceiveValue(null);
+                      fileCallback = null;
+                      return false;
+                  }
+              }
+
+              @Override
+              protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+                  super.onActivityResult(requestCode, resultCode, data);
+                  if (requestCode != FILE_CHOOSER_REQUEST || fileCallback == null) return;
+                  Uri[] result = null;
+                  if (resultCode == RESULT_OK) {
+                      if (data == null || data.getData() == null) {
+                          if (cameraUri != null) result = new Uri[]{cameraUri};
+                      } else {
+                          result = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                      }
+                  }
+                  fileCallback.onReceiveValue(result);
+                  fileCallback = null;
+                  cameraUri = null;
+              }
+
+              @Override
+              public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+                  if (requestCode == WEB_PERMISSION_REQUEST && pendingWebPermission != null) {
+                      boolean granted = true;
+                      for (int result : grantResults) granted &= result == PackageManager.PERMISSION_GRANTED;
+                      if (granted) pendingWebPermission.grant(pendingWebPermission.getResources());
+                      else pendingWebPermission.deny();
+                      pendingWebPermission = null;
+                  }
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (webView.canGoBack()) webView.goBack();
+                  else super.onBackPressed();
+              }
+
+              @Override
+              protected void onSaveInstanceState(Bundle outState) {
+                  webView.saveState(outState);
+                  super.onSaveInstanceState(outState);
+              }
+          }
+          EOF
 
       - name: Build debug APK
+        working-directory: android-project
         shell: bash
         run: |
-          set -Eeuxo pipefail
-          cd "$PROJECT_DIR"
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          set -Eeuo pipefail
+          gradle --no-daemon --stacktrace assembleDebug
 
       - name: Prepare APK artifact
         shell: bash
         run: |
-          set -Eeuxo pipefail
-          APK="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -type f -name '*.apk' -print -quit)"
+          set -Eeuo pipefail
+          APK="$(find android-project/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
           test -n "$APK"
           mkdir -p output
           cp "$APK" 'output/Jardin-Central-Alpha-0.1.0-debug.apk'
