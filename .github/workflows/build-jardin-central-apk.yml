@@ -7,6 +7,12 @@ on:
     paths:
       - '.github/workflows/build-jardin-central-apk.yml'
       - 'android-apk-build/**'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/build-jardin-central-apk.yml'
+      - 'android-apk-build/**'
   workflow_dispatch:
 
 permissions:
@@ -37,7 +43,6 @@ jobs:
           test -f android-project/settings.gradle.kts
           test -f android-project/gradlew
           chmod +x android-project/gradlew
-          echo 'Android project restored successfully.'
 
       - name: Build debug APK
         working-directory: android-project
